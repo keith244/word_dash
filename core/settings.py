@@ -31,9 +31,9 @@ except FileNotFoundError as e:
 SECRET_KEY = config.get('SECRET_KEY')
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = config.get('DEBUG', 'True') == 'True'
+DEBUG = config.get('DEBUG', 'True')
 
-ALLOWED_HOSTS = config.get('ALLOWED_HOSTS')
+ALLOWED_HOSTS = []
 
 
 # Application definition
@@ -45,10 +45,15 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    
+    'channels',
+    'users',
+    'word_dash',
 ]
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
+    'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -133,6 +138,10 @@ STATIC_URL = 'static/'
 STATICFILES_DIRS = [
     BASE_DIR / 'static'
 ]
+STATIC_ROOT = BASE_DIR / 'staticfiles'
+
+STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
+
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
 # STATIC_ROOT = os.environ.get('STATIC_ROOT', str(BASE_DIR / 'staticfiles'))
@@ -144,3 +153,22 @@ EMAIL_USE_TLS = config.get('EMAIL_USE_TLS', 'True') == 'True'
 EMAIL_PORT = int(config.get('EMAIL_PORT', '587'))
 EMAIL_HOST_USER = config.get('EMAIL_HOST_USER', '')
 EMAIL_HOST_PASSWORD = config.get('EMAIL_HOST_PASSWORD', '')
+
+
+AUTH_USER_MODEL = 'users.User'
+
+AUTHENTICATION_BACKENDS = [
+    'users.backends.EmailOrUsernameBackend',
+]
+
+LOGIN_URL = 'login'
+LOGIN_REDIRECT_URL = 'lobby'
+LOGOUT_REDIRECT_URL = 'login'
+
+ASGI_APPLICATION = 'core.asgi.application'
+
+CHANNEL_LAYERS = {
+    'default': {
+        'BACKEND':'channels.layers.InMemoryChannelLayer',
+    }
+}
