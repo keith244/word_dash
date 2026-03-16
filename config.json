@@ -1,0 +1,19 @@
+{
+    "SECRET_KEY":"django-insecure-_l#$h21xy-ic-u#=9)4q%am_+$vlsao3fcs+^yj!yyk#zf$ojk",
+    "DEBUG" : true,
+    "ALLOWED_HOSTS" : ["127.0.0.1"],
+    "EMAIL_BACKEND":"django.core.mail.backends.smtp.EmailBackend",
+    "EMAIL_HOST":"smtp.gmail.com",
+    "EMAIL_USE_TLS":true,
+    "EMAIL_PORT": 587,
+    "EMAIL_HOST_USER":"johndoe@gmail.com",
+    "EMAIL_HOST_PASSWORD":"",
+    "DATABASES": {
+        "ENGINE": "django.db.backends.mysql",
+        "NAME": "word_dash",
+        "USER": "root",
+        "PASSWORD": "",
+        "HOST": "localhost",
+        "PORT": "3306"
+    }
+}
