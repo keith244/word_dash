@@ -7,6 +7,8 @@ from django.core.mail import send_mail
 from django.conf import settings as django_settings
 from .models import Match, Round, WordSubmission, Challenge, Notification
 from django.contrib.auth import get_user_model
+from .dictionary import is_valid_word
+from django.db import transaction
 
 User = get_user_model()
 
@@ -114,6 +116,8 @@ class MatchConsumer(AsyncWebsocketConsumer):
                 'player1_score': result['player1_score'],
                 'player2_score': result['player2_score'],
                 'next_round_id': result.get('next_round_id'),
+                'next_round_first_picker': self.user.username,  # winner always picks first next round
+
             })
 
     # --- DB operations ---
@@ -122,13 +126,17 @@ class MatchConsumer(AsyncWebsocketConsumer):
         try:
             round_obj = Round.objects.get(id=round_id, status='letter_pick')
         except Round.DoesNotExist:
+            print(f"DEBUG save_letter: round {round_id} not found or not in letter_pick status")
             return None
+
+        print(f"DEBUG save_letter: round {round_id} | user_id={user_id} | first_picker={round_obj.first_letter_picker.id} | second_picker={round_obj.second_letter_picker.id} | first_letter='{round_obj.first_letter}' | second_letter='{round_obj.second_letter}'")
 
         if round_obj.first_letter_picker.id == user_id and not round_obj.first_letter:
             round_obj.first_letter = letter
         elif round_obj.second_letter_picker.id == user_id and not round_obj.second_letter:
             round_obj.second_letter = letter
         else:
+            print(f"DEBUG save_letter: rejected — not this user's turn")
             return None
 
         if round_obj.first_letter and round_obj.second_letter:
@@ -144,90 +152,95 @@ class MatchConsumer(AsyncWebsocketConsumer):
 
     @database_sync_to_async
     def save_word(self, round_id, user_id, word):
+        from django.db import transaction
         try:
-            round_obj = Round.objects.select_related('match').get(
-                id=round_id, status='word_race'
-            )
+            with transaction.atomic():
+                round_obj = Round.objects.select_related('match').select_for_update().get(
+                    id=round_id, status='word_race'
+                )
+
+                fl = round_obj.first_letter.lower()
+                sl = round_obj.second_letter.lower()
+
+                is_valid = (
+                    len(word) >= 2 and
+                    word[0] == fl and
+                    word[-1] == sl and
+                    is_valid_word(word)
+                )
+
+                if round_obj.winner is not None:
+                    return None
+
+                submission = WordSubmission.objects.create(
+                    round=round_obj,
+                    player_id=user_id,
+                    word=word,
+                    is_valid=is_valid,
+                    is_winner=False,
+                )
+
+                if not is_valid:
+                    return {
+                        'is_valid': False,
+                        'is_winner': False,
+                        'match_status': round_obj.match.status,
+                        'player1_score': round_obj.match.player1_score,
+                        'player2_score': round_obj.match.player2_score,
+                    }
+
+                submission.is_winner = True
+                submission.save()
+
+                round_obj.winner_id = user_id
+                round_obj.status = 'completed'
+                round_obj.save()
+
+                match = round_obj.match
+                if match.player1_id == user_id:
+                    match.player1_score += 1
+                else:
+                    match.player2_score += 1
+
+                rounds_to_win = match.rounds_to_win()
+                match_winner = None
+                next_round_id = None
+
+                if match.player1_score >= rounds_to_win:
+                    match.status = 'completed'
+                    match.winner_id = match.player1_id
+                    match_winner = match.player1.username
+                elif match.player2_score >= rounds_to_win:
+                    match.status = 'completed'
+                    match.winner_id = match.player2_id
+                    match_winner = match.player2.username
+                else:
+                    next_round = Round.objects.create(
+                        match=match,
+                        round_number=round_obj.round_number + 1,
+                        first_letter_picker_id=user_id,
+                        second_letter_picker_id=(
+                            match.player2_id if match.player1_id == user_id else match.player1_id
+                        ),
+                        status='letter_pick',
+                    )
+                    next_round_id = next_round.id
+
+                match.save()
+
+                return {
+                    'is_valid': True,
+                    'is_winner': True,
+                    'match_status': match.status,
+                    'match_winner': match_winner,
+                    'player1_score': match.player1_score,
+                    'player2_score': match.player2_score,
+                    'next_round_id': next_round_id,
+                }
+
         except Round.DoesNotExist:
+            print(f"DEBUG save_word: round {round_id} not found or not in word_race status")
             return None
-
-        fl = round_obj.first_letter.lower()
-        sl = round_obj.second_letter.lower()
-
-        is_valid = word[0] == fl and word[-1] == sl and len(word) >= 2
-
-        # Check if round already has a winner
-        if round_obj.winner is not None:
-            return None
-
-        submission = WordSubmission.objects.create(
-            round=round_obj,
-            player_id=user_id,
-            word=word,
-            is_valid=is_valid,
-            is_winner=False,
-        )
-
-        if not is_valid:
-            return {
-                'is_valid': False,
-                'is_winner': False,
-                'match_status': round_obj.match.status,
-                'player1_score': round_obj.match.player1_score,
-                'player2_score': round_obj.match.player2_score,
-            }
-
-        # Valid word — mark as winner
-        submission.is_winner = True
-        submission.save()
-
-        round_obj.winner_id = user_id
-        round_obj.status = 'completed'
-        round_obj.save()
-
-        # Update match score
-        match = round_obj.match
-        if match.player1_id == user_id:
-            match.player1_score += 1
-        else:
-            match.player2_score += 1
-
-        rounds_to_win = match.rounds_to_win()
-        match_winner = None
-        next_round_id = None
-
-        if match.player1_score >= rounds_to_win:
-            match.status = 'completed'
-            match.winner_id = match.player1_id
-            match_winner = match.player1.username
-        elif match.player2_score >= rounds_to_win:
-            match.status = 'completed'
-            match.winner_id = match.player2_id
-            match_winner = match.player2.username
-        else:
-            # Create next round
-            next_round = Round.objects.create(
-                match=match,
-                round_number=round_obj.round_number + 1,
-                first_letter_picker_id=user_id,
-                second_letter_picker_id=(
-                    match.player2_id if match.player1_id == user_id else match.player1_id
-                ),
-                status='letter_pick',
-            )
-            next_round_id = next_round.id
-
-        match.save()
-
-        return {
-            'is_valid': True,
-            'is_winner': True,
-            'match_status': match.status,
-            'match_winner': match_winner,
-            'player1_score': match.player1_score,
-            'player2_score': match.player2_score,
-            'next_round_id': next_round_id,
-        }
 
     # --- Group event handlers ---
     async def player_joined(self, event):

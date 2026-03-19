@@ -9,4 +9,5 @@ urlpatterns = [
     path('challenge/<int:challenge_id>/accept/', views.accept_challenge, name='accept_challenge'),
     path('challenge/<int:challenge_id>/decline/', views.decline_challenge, name='decline_challenge'),
     path('notifications/', views.notifications_view, name='notifications'),
+    path('match/<int:match_id>/state/', views.match_state, name='match_state'),
 ]

@@ -176,3 +176,30 @@ def notifications_view(request):
             'id', 'type', 'message', 'is_read', 'created_at', 'challenge_id'
         ))
     })
+    
+@login_required
+def match_state(request, match_id):
+    match = get_object_or_404(Match, id=match_id)
+
+    if request.user not in [match.player1, match.player2]:
+        return JsonResponse({'error': 'forbidden'}, status=403)
+
+    current_round = match.rounds.filter(
+        status__in=['letter_pick', 'word_race']
+    ).order_by('round_number').last()
+
+    return JsonResponse({
+        'match_id': match.id,
+        'match_status': match.status,
+        'player1_score': match.player1_score,
+        'player2_score': match.player2_score,
+        'current_round': {
+            'id': current_round.id,
+            'round_number': current_round.round_number,
+            'status': current_round.status,
+            'first_letter_picker_id': current_round.first_letter_picker.id,
+            'second_letter_picker_id': current_round.second_letter_picker.id,
+            'first_letter': current_round.first_letter,
+            'second_letter': current_round.second_letter,
+        } if current_round else None,
+    })
