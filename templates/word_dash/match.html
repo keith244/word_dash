@@ -100,12 +100,61 @@
   const opponent = "{{ opponent.username }}";
   let currentRoundId = {{ current_round.id|default:"null" }};
   let roundStatus = "{{ current_round.status|default:'' }}";
+  let myTurn = false;  // ← single source of truth for input gating
 
   const socket = new WebSocket(`ws://${window.location.host}/ws/match/${matchId}/`);
   const chatBody = document.getElementById('chat-body');
   const input = document.getElementById('chat-input');
   const roundStatusEl = document.getElementById('round-status');
 
+  // Fetch the current match state from server
+  async function fetchMatchState() {
+    try {
+      const res = await fetch(`/word_dash/match/${matchId}/state/`);
+      if (!res.ok) return null;
+      const data = await res.json();
+      console.log('[DEBUG] match_state response:', data);
+      return data;
+    } catch (err) {
+      console.error('[DEBUG] fetchMatchState error:', err);
+      return null;
+    }
+  }
+
+  // --- Input state management ---
+  function setInputState(state, placeholder) {
+    // states: 'my_turn' | 'waiting' | 'word_race' | 'disabled'
+    input.placeholder = placeholder;
+
+    if (state === 'my_turn') {
+      input.disabled = false;
+      myTurn = true;
+      input.style.opacity = '1';
+      input.style.cursor = 'text';
+    } else if (state === 'word_race') {
+      input.disabled = false;
+      myTurn = true;
+      input.style.opacity = '1';
+      input.style.cursor = 'text';
+    } else if (state === 'waiting') {
+      input.disabled = true;
+      myTurn = false;
+      input.style.opacity = '0.4';
+      input.style.cursor = 'not-allowed';
+    } else if (state === 'disabled') {
+      input.disabled = true;
+      myTurn = false;
+      input.style.opacity = '0.4';
+      input.style.cursor = 'not-allowed';
+    }
+  }
+
+  // --- Chat helpers ---
+  function scrollBottom() {
+    chatBody.scrollTop = chatBody.scrollHeight;
+  }
+
+  // --- Chat helpers ---
   function scrollBottom() {
     chatBody.scrollTop = chatBody.scrollHeight;
   }
@@ -154,8 +203,33 @@
     scrollBottom();
   }
 
+  // --- WebSocket events ---
+  socket.onopen = async function(e) {
+    console.log('[DEBUG] WebSocket connected');
+    // If currentRoundId is null, fetch the current state from server
+    if (!currentRoundId) {
+      console.log('[DEBUG] currentRoundId is null, fetching match state...');
+      const state = await fetchMatchState();
+      if (state && state.current_round) {
+        currentRoundId = state.current_round.id;
+        roundStatus = state.current_round.status;
+        console.log('[DEBUG] Updated from server: roundId=' + currentRoundId + ', status=' + roundStatus);
+        // Re-evaluate input state based on fetched round
+        await initializeInputState(state.current_round);
+      }
+    }
+  };
+
+  socket.onerror = function(e) {
+    console.error('[DEBUG] WebSocket error:', e);
+  };
+
+  socket.onclose = function(e) {
+    console.log('[DEBUG] WebSocket closed:', e.code);
+  };
   socket.onmessage = function(e) {
     const data = JSON.parse(e.data);
+    console.log('[DEBUG] WebSocket message received:', data);
 
     if (data.type === 'player_joined') {
       addSysMsg(`${data.username} joined the match`);
@@ -167,20 +241,32 @@
       currentRoundId = data.round_id;
 
       if (data.status === 'word_race') {
+        // Both letters in — everyone can type their word
         addPatternPill(data.first_letter, data.second_letter);
         addSysMsg('Race! First valid word wins the round');
         roundStatus = 'word_race';
         roundStatusEl.textContent = 'Race in progress!';
-        input.placeholder = 'Type your word...';
+        setInputState('word_race', 'Type your word...');
       } else {
-        const waitingFor = isMe ? opponent : currentUser;
-        addSysMsg(`Waiting for ${isMe ? opponent : 'you'} to pick a letter`);
+        // One letter picked, waiting for the other
         roundStatus = 'letter_pick';
+        if (isMe) {
+          // I just picked — now waiting for opponent
+          setInputState('waiting', `Waiting for ${opponent} to pick a letter...`);
+          roundStatusEl.textContent = 'Picking letters...';
+          addSysMsg(`Waiting for ${opponent} to pick a letter`);
+        } else {
+          // Opponent just picked — now it's my turn to pick second letter
+          setInputState('my_turn', 'Your turn — pick a letter (a–z)');
+          roundStatusEl.textContent = 'Your turn to pick!';
+          addSysMsg('Your turn — pick a letter');
+        }
       }
     }
 
     else if (data.type === 'word_submitted') {
       const isMe = data.username === currentUser;
+      console.log('[DEBUG] word_submitted:', {isMe, word: data.word, is_valid: data.is_valid});
       if (data.is_valid) {
         addBubble(data.word, isMe, `${isMe ? 'your' : data.username + "'s"} word`);
       } else {
@@ -189,32 +275,77 @@
     }
 
     else if (data.type === 'round_over') {
-      const isMe = data.winner === currentUser;
-      addWinnerBadge(`${isMe ? 'You' : data.winner} won the round`, isMe);
+      console.log('[DEBUG] round_over:', data);
+      const iWonRound = data.winner === currentUser;
+      addWinnerBadge(`${iWonRound ? 'You' : data.winner} won the round`, iWonRound);
 
       if (data.match_status === 'completed') {
-        const iWon = data.match_winner === currentUser;
-        addSysMsg(`Match over · ${iWon ? 'You win!' : data.match_winner + ' wins!'}`);
-        input.disabled = true;
-        input.placeholder = 'Match over';
+        const iWonMatch = data.match_winner === currentUser;
+        addSysMsg(`Match over · ${iWonMatch ? 'You win!' : data.match_winner + ' wins!'}`);
         roundStatusEl.textContent = 'Match over';
+        setInputState('disabled', 'Match over');
       } else {
         currentRoundId = data.next_round_id;
         roundStatus = 'letter_pick';
-        addRoundDivider(parseInt(data.round_id) + 1);
-        addSysMsg(data.winner === currentUser ? 'You go first — pick a letter' : `Waiting for ${data.winner} to pick a letter`);
-        input.placeholder = 'Type a letter or your word...';
-        roundStatusEl.textContent = 'Picking letters...';
+        const iPickFirst = data.next_round_first_picker === currentUser;
+        addRoundDivider(data.round_number ? data.round_number + 1 : '');
+        roundStatusEl.textContent = iPickFirst ? 'Your turn to pick!' : 'Picking letters...';
+
+        if (iPickFirst) {
+          addSysMsg('You won — pick the first letter');
+          setInputState('my_turn', 'Your turn — pick a letter (a–z)');
+        } else {
+          addSysMsg(`Waiting for ${data.winner} to pick the first letter`);
+          setInputState('waiting', `Waiting for ${data.winner} to pick a letter...`);
+        }
       }
+    }
+
+    else if (data.type === 'error') {
+      console.error('[DEBUG] Server error:', data.message);
+      addSysMsg(`Error: ${data.message}`);
+    }
+
+    else {
+      console.warn('[DEBUG] Unknown message type:', data.type);
     }
   };
 
+  // --- Send message ---
   function sendMessage() {
     const val = input.value.trim();
-    if (!val || !currentRoundId) return;
+    
+    console.log('[DEBUG] sendMessage called:', {val, currentRoundId, myTurn, roundStatus});
+    
+    if (!val) {
+      console.log('[DEBUG] sendMessage: empty value');
+      return;
+    }
+    
+    if (!currentRoundId) {
+      console.error('[DEBUG] sendMessage BLOCKED: no currentRoundId! Fetching state...');
+      fetchMatchState().then(state => {
+        if (state && state.current_round) {
+          currentRoundId = state.current_round.id;
+          roundStatus = state.current_round.status;
+          console.log('[DEBUG] State refreshed:', {currentRoundId, roundStatus});
+          addSysMsg('Ready to play!');
+        } else {
+          addSysMsg('Error: No active round. Reload the page.');
+        }
+      });
+      return;
+    }
+    
+    if (!myTurn) {
+      console.log('[DEBUG] sendMessage BLOCKED: not my turn');
+      addSysMsg('Wait for your turn');
+      return;
+    }
 
     if (roundStatus === 'letter_pick') {
       if (val.length === 1 && val.match(/[a-zA-Z]/)) {
+        console.log('[DEBUG] Sending letter:', val);
         socket.send(JSON.stringify({
           action: 'pick_letter',
           letter: val.toUpperCase(),
@@ -222,35 +353,66 @@
         }));
         input.value = '';
       } else {
-        alert('Please pick a single letter.');
+        addSysMsg('Pick a single letter (a–z)');
       }
     } else if (roundStatus === 'word_race') {
+      console.log('[DEBUG] Sending word:', val);
       socket.send(JSON.stringify({
         action: 'submit_word',
         word: val.toLowerCase(),
         round_id: currentRoundId,
       }));
       input.value = '';
+    } else {
+      console.log('[DEBUG] roundStatus unknown:', roundStatus);
+      addSysMsg('Error: Unknown game state. Refresh to continue.');
     }
   }
 
-  // Init round status on load
+  // --- Initial state on page load ---
+  console.log('[DEBUG] Page load | currentUser:', currentUser);
+  console.log('[DEBUG] current_round exists: {% if current_round %}true{% else %}false{% endif %}');
+  
   {% if current_round %}
+    roundStatus = '{{ current_round.status }}';
+    console.log('[DEBUG] current_round.id:', {{ current_round.id }});
+    console.log('[DEBUG] current_round.status:', '{{ current_round.status }}');
+    console.log('[DEBUG] first_letter_picker.id:', {{ current_round.first_letter_picker.id }});
+    console.log('[DEBUG] second_letter_picker.id:', {{ current_round.second_letter_picker.id }});
+    console.log('[DEBUG] first_letter:', '{{ current_round.first_letter }}');
+    console.log('[DEBUG] second_letter:', '{{ current_round.second_letter }}');
+    
     {% if current_round.status == 'letter_pick' %}
-      roundStatus = 'letter_pick';
+      console.log('[DEBUG] Status is letter_pick');
       {% if current_round.first_letter_picker.id == user.id and not current_round.first_letter %}
+        console.log('[DEBUG] I am first picker and first letter not set');
+        // I pick first letter
         addSysMsg('You go first — pick a letter');
+        setInputState('my_turn', 'Your turn — pick a letter (a–z)');
+        roundStatusEl.textContent = 'Your turn to pick!';
       {% elif current_round.second_letter_picker.id == user.id and not current_round.second_letter %}
+        console.log('[DEBUG] I am second picker and second letter not set');
+        // I pick second letter
         addSysMsg('Pick the second letter');
+        setInputState('my_turn', 'Your turn — pick a letter (a–z)');
+        roundStatusEl.textContent = 'Your turn to pick!';
       {% else %}
+        console.log('[DEBUG] I am waiting for opponent');
+        // Waiting for opponent
         addSysMsg('Waiting for {{ opponent.username }} to pick a letter');
+        setInputState('waiting', 'Waiting for {{ opponent.username }} to pick a letter...');
       {% endif %}
     {% elif current_round.status == 'word_race' %}
-      roundStatus = 'word_race';
+      console.log('[DEBUG] Status is word_race');
       addPatternPill('{{ current_round.first_letter }}', '{{ current_round.second_letter }}');
       addSysMsg('Race! First valid word wins the round');
-      input.placeholder = 'Type your word...';
+      setInputState('word_race', 'Type your word...');
+    {% else %}
+      console.log('[DEBUG] Status is unknown:', '{{ current_round.status }}');
     {% endif %}
+  {% else %}
+    console.log('[DEBUG] No current round found');
+    setInputState('waiting', 'Waiting...');
   {% endif %}
 </script>
 {% endblock %}

@@ -280,6 +280,7 @@ class MatchConsumer(AsyncWebsocketConsumer):
             'player1_score': event['player1_score'],
             'player2_score': event['player2_score'],
             'next_round_id': event.get('next_round_id'),
+            'next_round_first_picker': event.get('next_round_first_picker'),
         }))
         
         

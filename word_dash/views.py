@@ -188,6 +188,15 @@ def match_state(request, match_id):
         status__in=['letter_pick', 'word_race']
     ).order_by('round_number').last()
 
+    if current_round is None:
+        return JsonResponse({
+            'match_id': match.id,
+            'match_status': match.status,
+            'player1_score': match.player1_score,
+            'player2_score': match.player2_score,
+            'current_round': None,
+        })
+
     return JsonResponse({
         'match_id': match.id,
         'match_status': match.status,
@@ -201,5 +210,5 @@ def match_state(request, match_id):
             'second_letter_picker_id': current_round.second_letter_picker.id,
             'first_letter': current_round.first_letter,
             'second_letter': current_round.second_letter,
-        } if current_round else None,
+        },
     })
