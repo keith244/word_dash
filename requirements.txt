@@ -3,3 +3,7 @@ channels-redis
 daphne
 Django
 mysqlclient
+gunicorn
+whitenoise
+python-dotenv
+psycopg2-binary

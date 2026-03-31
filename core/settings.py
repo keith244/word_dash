@@ -17,23 +17,35 @@ import os
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-# set up for config file use
-try:
-    with open(BASE_DIR / 'config.json') as conf_file:
-        config = json.load(conf_file)
-except FileNotFoundError as e:
-    raise FileNotFoundError(f"The configuration file 'config.json' was not found. {e}")
+# Load config from environment variables or fall back to config.json
+def get_config(key, default=None):
+    """Get config from environment variables first, then from config.json"""
+    # Check environment variable first
+    env_value = os.environ.get(key)
+    if env_value is not None:
+        return env_value
+    
+    # Fall back to config.json if it exists
+    try:
+        with open(BASE_DIR / 'config.json') as conf_file:
+            config = json.load(conf_file)
+            return config.get(key, default)
+    except FileNotFoundError:
+        # In production, config.json is not needed as all config comes from env vars
+        if os.environ.get('DJANGO_ENV') == 'production':
+            return default
+        raise FileNotFoundError(f"The configuration file 'config.json' was not found.")
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/6.0/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = config.get('SECRET_KEY')
+SECRET_KEY = get_config('SECRET_KEY', 'django-insecure-changeme')
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = config.get('DEBUG', 'True')
+DEBUG = get_config('DEBUG', 'False') in ('True', 'true', '1', 'yes')
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = get_config('ALLOWED_HOSTS', '127.0.0.1').split(',')
 
 
 # Application definition
@@ -85,19 +97,23 @@ WSGI_APPLICATION = 'core.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/6.0/ref/settings/#databases
 
+# Support both MySQL and PostgreSQL
+db_engine = get_config('DB_ENGINE', 'django.db.backends.mysql')
+
 DATABASES = {
     'default': {
-        'ENGINE': 'django.db.backends.mysql',
-        'NAME': config.get('DB_NAME', 'word_dash'),
-        'USER': config.get('DB_USER', 'root'),
-        'PASSWORD': config.get('DB_PASSWORD', ''),
-        'HOST': config.get('DB_HOST', 'localhost'),
-        'PORT': config.get('DB_PORT', '3306'),
-        # 'OPTIONS': {
-        #     'charset': 'utf8mb4'
-        # }
+        'ENGINE': db_engine,
+        'NAME': get_config('DB_NAME', 'word_dash'),
+        'USER': get_config('DB_USER', 'root'),
+        'PASSWORD': get_config('DB_PASSWORD', ''),
+        'HOST': get_config('DB_HOST', 'localhost'),
+        'PORT': get_config('DB_PORT', '3306' if 'mysql' in db_engine else '5432'),
     }
 }
+
+# Handle connection pooling for PostgreSQL if needed
+if 'postgresql' in db_engine:
+    DATABASES['default']['CONN_MAX_AGE'] = 600
 
 
 # Password validation
@@ -147,12 +163,12 @@ MEDIA_ROOT = BASE_DIR / 'media'
 # STATIC_ROOT = os.environ.get('STATIC_ROOT', str(BASE_DIR / 'staticfiles'))
 
 # Email settings
-EMAIL_BACKEND = config.get('EMAIL_BACKEND', 'django.core.mail.backends.console.EmailBackend')
-EMAIL_HOST = config.get('EMAIL_HOST', 'smtp.gmail.com')
-EMAIL_USE_TLS = config.get('EMAIL_USE_TLS', 'True') == 'True'
-EMAIL_PORT = int(config.get('EMAIL_PORT', '587'))
-EMAIL_HOST_USER = config.get('EMAIL_HOST_USER', '')
-EMAIL_HOST_PASSWORD = config.get('EMAIL_HOST_PASSWORD', '')
+EMAIL_BACKEND = get_config('EMAIL_BACKEND', 'django.core.mail.backends.console.EmailBackend')
+EMAIL_HOST = get_config('EMAIL_HOST', 'smtp.gmail.com')
+EMAIL_USE_TLS = get_config('EMAIL_USE_TLS', 'True') in ('True', 'true', '1', 'yes')
+EMAIL_PORT = int(get_config('EMAIL_PORT', '587'))
+EMAIL_HOST_USER = get_config('EMAIL_HOST_USER', '')
+EMAIL_HOST_PASSWORD = get_config('EMAIL_HOST_PASSWORD', '')
 
 
 AUTH_USER_MODEL = 'users.User'

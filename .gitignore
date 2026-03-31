@@ -21,6 +21,10 @@ media/
 
 # Environment variables
 .env
+.env.*.local
+
+# Configuration (use environment variables instead)
+config.json
 
 # Tailwind / Node
 node_modules/

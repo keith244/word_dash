@@ -1,0 +1,57 @@
+app = "word-dash"
+primary_region = "ord"
+
+[build]
+  builder = "paketobuildpacks/builder:base"
+
+[env]
+  DJANGO_ENV = "production"
+  PYTHONUNBUFFERED = "1"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = true
+  auto_start_machines = true
+  processes = ["app"]
+
+[[services]]
+  processes = ["app"]
+  protocol = "tcp"
+  internal_port = 8080
+
+  [services.concurrency]
+    type = "connections"
+    hard_limit = 100
+    soft_limit = 80
+
+  [[services.ports]]
+    port = 80
+    handlers = ["http"]
+
+  [[services.ports]]
+    port = 443
+    handlers = ["tls", "http"]
+
+[checks]
+  [checks.alive]
+    type = "http"
+    grace_period = "30s"
+    interval = "30s"
+    timeout = "5s"
+    method = "GET"
+    path = "/"
+
+[[vm]]
+  memory = "512mb"
+  cpus = 1
+  cpu_kind = "shared"
+  processes = "app"
+
+[[statics]]
+  guest_path = "/app/staticfiles"
+  url_prefix = "/static"
+
+[deploy]
+  release_command = "python manage.py migrate"
+  strategy = "rolling"

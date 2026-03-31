@@ -1,0 +1,17 @@
+{
+    "SECRET_KEY": "REPLACE_WITH_GENERATED_SECRET_KEY",
+    "DEBUG": false,
+    "ALLOWED_HOSTS": ["your-app-name.fly.dev", "www.your-app-name.fly.dev"],
+    "DB_ENGINE": "django.db.backends.postgresql",
+    "DB_NAME": "word_dash",
+    "DB_USER": "postgres",
+    "DB_PASSWORD": "REPLACE_WITH_SECURE_PASSWORD",
+    "DB_HOST": "your-db-instance.internal",
+    "DB_PORT": "5432",
+    "EMAIL_BACKEND": "django.core.mail.backends.smtp.EmailBackend",
+    "EMAIL_HOST": "smtp.gmail.com",
+    "EMAIL_USE_TLS": true,
+    "EMAIL_PORT": 587,
+    "EMAIL_HOST_USER": "your-email@gmail.com",
+    "EMAIL_HOST_PASSWORD": "REPLACE_WITH_APP_PASSWORD"
+}
